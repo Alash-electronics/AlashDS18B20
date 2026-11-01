@@ -1,0 +1,11 @@
+{
+  "name": "AlashDS18B20",
+  "version": "1.0.0",
+  "description": "Easy DS18B20 library: several sensors on one wire, non-blocking, clear errors (ru/kk/en), no OneWire needed",
+  "keywords": "DS18B20, DS18S20, DS1822, temperature, 1-Wire, OneWire, sensor",
+  "repository": { "type": "git", "url": "https://github.com/Alash-electronics/AlashDS18B20" },
+  "authors": [{ "name": "Alash Electronics", "email": "alash.electronics@gmail.com" }],
+  "license": "MIT",
+  "frameworks": "arduino",
+  "platforms": "*"
+}
