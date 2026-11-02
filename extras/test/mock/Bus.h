@@ -12,6 +12,7 @@ struct SimDev {
   float temp = 20.0f;
   bool first85 = false;      // первое измерение даёт 85 °C (как после включения)
   bool corrupt = false;      // портит CRC блокнота
+  bool parasite = false;     // питается от линии: измерение удаётся, только если линию держат на питании всё время
   bool converted = false;
   int convertCount = 0;
   uint8_t cfg = 0x7F;        // регистр настройки (12 бит)
@@ -22,7 +23,11 @@ struct SimDev {
 struct SimBus {
   std::vector<SimDev> devs;
   bool shorted = false;
-  enum State { ROM_CMD, SEARCH, MATCH, FUNC_CMD, READ_SP, WRITE_SP, DEAD } st = ROM_CMD;
+  enum State { ROM_CMD, SEARCH, MATCH, FUNC_CMD, READ_SP, WRITE_SP, READ_PWR, DEAD } st = ROM_CMD;
+  // Паразитное питание: после 0x44 линия должна быть сразу переведена на питание и держаться не меньше времени измерения
+  bool parBusy = false, parPowered = false; uint32_t parStart = 0; uint32_t parNeedMs = 750; bool busyWhilePowered = false;
+  int powerOns = 0, lostConversions = 0, strongBusyViolations = 0;
+  uint8_t savedSp[9]; SimDev *parDev[16]; int parN = 0;
   int cmdBits = 0; uint8_t cmd = 0;
   int bitpos = 0, phase = 0; uint8_t matchBuf[8]; int writeBytes = 0;
   int spBit = 0; uint8_t wbuf[3];
@@ -40,6 +45,26 @@ struct SimBus {
     devs.push_back(d);
   }
   static uint8_t crcSp(const uint8_t *sp) { return AlashOneWire::crc8(sp, 8); }
+
+  void failParasite() {                      // питание пропало или не дотянули: датчик перезагрузился и показывает 85 °C
+    for (int i = 0; i < parN; i++) {
+      SimDev &d = *parDev[i];
+      d.sp[0] = 0x50; d.sp[1] = 0x05; d.sp[8] = crcSp(d.sp);
+    }
+    lostConversions++;
+    parBusy = false; parPowered = false; parN = 0;
+  }
+  void powerOn() {
+    powerOns++;
+    if (parBusy) parPowered = true;
+  }
+  void powerOff() {
+    if (!parBusy) { parPowered = false; return; }
+    bool enough = parPowered && (g_now - parStart) >= parNeedMs;
+    if (enough) { parBusy = false; parPowered = false; parN = 0; } else failParasite();
+  }
+  // любой обмен по линии во время измерения паразитного датчика ломает его (линия не на питании или занята)
+  void busTouch() { if (parBusy) { if (parPowered) strongBusyViolations++; failParasite(); } }
 
   void convert(SimDev &d) {
     d.convertCount++;
@@ -61,6 +86,7 @@ struct SimBus {
   }
 
   bool reset() {
+    busTouch();
     resets++;
     if (shorted || devs.empty()) return false;
     st = ROM_CMD; cmdBits = 0; cmd = 0;
@@ -69,6 +95,7 @@ struct SimBus {
   }
 
   void writeBit(bool b) {
+    busTouch();
     switch (st) {
       case ROM_CMD:
       case FUNC_CMD:
@@ -109,7 +136,19 @@ struct SimBus {
       else if (c == 0x55) { st = MATCH; bitpos = 0; memset(matchBuf, 0, 8); }
       else st = DEAD;
     } else {                                // функциональная команда
-      if (c == 0x44) { for (auto &d : devs) if (d.sel) convert(d); st = DEAD; }
+      if (c == 0x44) {
+        parN = 0; bool par = false; parNeedMs = 94;
+        for (auto &d : devs) if (d.sel) {
+          convert(d);
+          if (d.parasite) { par = true; if (parN < 16) parDev[parN++] = &d; }
+          int res = d.rom[0] == 0x10 ? 3 : ((d.cfg >> 5) & 3);
+          uint32_t ms = res == 3 ? 750 : res == 2 ? 375 : res == 1 ? 188 : 94;
+          if (ms > parNeedMs) parNeedMs = ms;
+        }
+        if (par) { parBusy = true; parPowered = false; parStart = g_now; }
+        st = DEAD;
+      }
+      else if (c == 0xB4) { st = READ_PWR; }
       else if (c == 0xBE) { st = READ_SP; spBit = 0; }
       else if (c == 0x4E) { st = WRITE_SP; writeBytes = 0; cmdBits = 0; memset(wbuf, 0, 3); }
       else st = DEAD;
@@ -117,6 +156,13 @@ struct SimBus {
   }
 
   bool readBit() {
+    busTouch();
+    if (st == READ_PWR) {                  // параситные датчики прижимают линию к земле
+      bool v = true;
+      for (auto &d : devs) if (d.sel && d.parasite) v = false;
+      st = DEAD;
+      return v;
+    }
     if (st == SEARCH) {
       bool any = false, bit = true, cmp = true;
       for (auto &d : devs) if (d.part) {
@@ -139,9 +185,21 @@ struct SimBus {
 };
 
 inline SimBus g_bus;
+inline int g_extPin = -1; inline bool g_extActiveHigh = true;   // внешний ключ питания: цифровой пин
+inline int g_extState = -1;
+void pinMode(uint8_t, uint8_t) {}
+void digitalWrite(uint8_t p, uint8_t v) {
+  if ((int)p != g_extPin) return;
+  bool on = (v == HIGH) == g_extActiveHigh;
+  if ((int)g_extState == (int)on) return;
+  g_extState = on;
+  if (on) g_bus.powerOn(); else g_bus.powerOff();
+}
 
 void AlashOneWire::setPin(uint8_t pin) { _pin = pin; }
 void AlashOneWire::setPullup(bool on) { _pullup = on; }
+void AlashOneWire::powerOn() { g_bus.powerOn(); }
+void AlashOneWire::powerOff() { g_bus.powerOff(); }
 bool AlashOneWire::lineHigh() { return !g_bus.shorted; }
 bool AlashOneWire::reset() { return g_bus.reset(); }
 void AlashOneWire::writeBit(bool b) { g_bus.writeBit(b); }

@@ -29,6 +29,7 @@ void loop() {
 - **Не принимает ошибку за температуру:** проверяет CRC, повторяет чтение при сбое, значение 85 °C (датчик без нормального питания) перепроверяет. Если не получилось, вернёт `NAN`, а не 0 или -127.
 - **Понятные ошибки** на русском, казахском и английском: `errorText()` и `diagnose(Serial)` (покажет линию, найденные датчики с адресами и что проверить).
 - **Единицы:** `temperature()` в °C, `temperatureF()` в °F; `temperatureByAddress()` по адресу; `setResolution(9..12)` меняет точность и скорость.
+- **Паразитное питание (два провода):** `begin()` сам узнаёт, как питаются датчики, и на время измерения держит линию на питании; для больших линий есть `setPowerPin()` (ключ на полевом транзисторе).
 - **Работает на Arduino AVR (Uno, Nano, Mega), ESP32, ESP8266** и других платах. Никаких внешних библиотек.
 
 ### Подключение
@@ -47,10 +48,10 @@ void loop() {
 - Нет подсказок, что делать, если датчик не нашёлся: у нас `errorText()` и `diagnose()`.
 - Несколько датчиков на одном проводе есть везде; у нас ещё общий запуск измерения и выбор по номеру или по адресу.
 
-DallasTemperature по-прежнему хороша, если нужны будильники (alarm) и запись в EEPROM датчика: в AlashDS18B20 их нет (датчик с паразитным питанием тоже не поддерживается: подключайте три провода).
+DallasTemperature по-прежнему хороша, если нужны будильники (alarm) и запись в EEPROM датчика: в AlashDS18B20 их нет (паразитное питание на двух проводах поддерживается, см. пример `ParasitePower`).
 
 ### Примеры
-`Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `Thermostat`.
+`Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `ParasitePower`, `Thermostat`.
 
 ### Тесты
 Протокол 1-Wire (поиск устройств по AN187, CRC8, выбор датчика, расчёт температуры) проверен без железа на имитации линии: `extras/test`.
@@ -82,6 +83,7 @@ void loop() {
 - **Барлық сенсор бір мезгілде өлшейді:** 0,75 с күту бір рет қана керек.
 - **Бағдарламаны тоқтатпай:** `request()` өлшеуді бастайды, `ready()` оның аяқталғанын айтады (`NonBlocking` мысалы).
 - **Қатені температура деп қабылдамайды:** CRC тексереді, ақау кезінде қайта оқиды, 85 °C мәнін (қуаты дұрыс емес сенсор) қайта тексереді. Болмаса 0 немесе -127 емес, `NAN` қайтарады.
+- **Паразиттік қуат (екі сым):** `begin()` датчиктердің қуатын өзі біледі және өлшеу кезінде желіні қуатта ұстайды; ұзын желілер үшін `setPowerPin()` (өрістік транзистор кілті) бар.
 - **Түсінікті қателер** орысша, қазақша және ағылшынша: `errorText()` және `diagnose(Serial)`.
 - **Бірліктер:** `temperature()` °C, `temperatureF()` °F; `temperatureByAddress()` мекенжай бойынша; `setResolution(9..12)` дәлдік пен жылдамдықты өзгертеді.
 - **Arduino AVR (Uno, Nano, Mega), ESP32, ESP8266** тақталарында жұмыс істейді. Сыртқы кітапхана қажет емес.
@@ -96,7 +98,7 @@ void loop() {
 Сары және қызыл сым арасына **4,7 кОм резистор** қою керек. Онсыз сенсор табылмайды. ESP32-де 34-39 пиндерін қолданбаңыз: олар тек кіріс.
 
 ### Мысалдар
-`Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `Thermostat`.
+`Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `ParasitePower`, `Thermostat`.
 
 Толық нұсқаулық: [docs/WIKI.md](docs/WIKI.md).
 
@@ -127,6 +129,7 @@ void loop() {
 - **Never mistakes an error for a temperature:** CRC check, retries on failure, re-measures the 85 °C power-on value. On failure you get `NAN`, not 0 or -127.
 - **Clear errors** in Russian, Kazakh and English: `errorText()` and `diagnose(Serial)`.
 - **Units:** `temperature()` in °C, `temperatureF()` in °F; `temperatureByAddress()`; `setResolution(9..12)` trades precision for speed.
+- **Parasite power (two wires):** `begin()` detects how the sensors are powered and holds the line high during each measurement; `setPowerPin()` adds a MOSFET switch for long lines.
 - Works on **Arduino AVR (Uno, Nano, Mega), ESP32, ESP8266** and others, with no extra libraries.
 
 ### Wiring
@@ -138,10 +141,10 @@ void loop() {
 
 A **4.7 kOhm resistor** between the yellow and red wires is required. On ESP32 avoid pins 34-39: they are input-only.
 
-Not supported: alarms, EEPROM copy and parasite power (use the three-wire connection). Use DallasTemperature if you need those.
+Parasite power (two wires) is supported: see the `ParasitePower` example. Not supported: alarms and EEPROM copy; use DallasTemperature if you need those.
 
 ### Examples
-`Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `Thermostat`.
+`Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `ParasitePower`, `Thermostat`.
 
 Full guide: [docs/WIKI.md](docs/WIKI.md).
 

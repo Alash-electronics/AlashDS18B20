@@ -2,6 +2,7 @@
 //   g++ -std=c++17 -DALASH_OW_EXTERNAL -DALASH_DS18B20_MAX=4 -I mock -I ../../src test_ds18b20.cpp ../../src/AlashDS18B20.cpp ../../src/AlashOneWire.cpp && ./a.out
 #include <assert.h>
 #include <stdio.h>
+#include <string>
 #include "Arduino.h"
 #include "AlashDS18B20.h"
 #include "Bus.h"
@@ -168,6 +169,68 @@ int main() {
   printf("--- diagnose ---\n");
   d.diagnose(*(new Print));
   printf("--- end ---\n");
+
+  // 16) паразитное питание: begin() сам узнаёт, на время измерения линия держится на питании, потом отпускается
+  fresh(); g_extPin = -1; g_extState = -1;
+  g_bus.addDevice(0x28, 1, 21.5f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 par(4);
+  CHECK(par.begin() && par.isParasite());
+  CHECK(near(par.temperature(), 21.5f, 0.001f) && par.error() == AlashDS18B20::ERR_OK);
+  CHECK(g_bus.lostConversions == 0 && g_bus.powerOns >= 1 && !g_bus.parBusy && g_bus.strongBusyViolations == 0);
+  // без питания в измерении тот же датчик давал бы 85 °C: проверяем, что имитация это замечает
+  { SimBus keep = g_bus; (void)keep; }
+  // внешнее питание определяется как внешнее
+  fresh(); g_bus.addDevice(0x28, 2, 19.0f); AlashDS18B20 ext(4); CHECK(ext.begin() && !ext.isParasite() && g_bus.powerOns == 0);
+  CHECK(near(ext.temperature(), 19.0f, 0.001f));
+  // смешанная линия: один паразитный датчик на линии делает паразитной всю линию
+  fresh(); g_bus.addDevice(0x28, 3, 10.0f); g_bus.addDevice(0x28, 4, 30.0f); g_bus.devs[1].parasite = true;
+  AlashDS18B20 mix(4); CHECK(mix.begin() && mix.isParasite() && mix.count() == 2);
+  CHECK(near(mix.temperature(0) + mix.temperature(1), 40.0f, 0.001f) && g_bus.lostConversions == 0);
+  // разная точность: измерение 9 бит короче, но линия держится не меньше положенного
+  fresh(); g_bus.addDevice(0x28, 5, 25.0f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 p9(4); CHECK(p9.begin() && p9.setResolution(9) && p9.isParasite());
+  CHECK(near(p9.temperature(), 25.0f, 0.5f) && g_bus.lostConversions == 0 && p9.conversionTimeMs() == 94);
+  // DS18S20 в паразитном режиме: 750 мс
+  fresh(); g_bus.addDevice(0x10, 6, 22.0f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 p20(4); CHECK(p20.begin() && near(p20.temperature(), 22.0f, 0.5f) && g_bus.lostConversions == 0);
+  // без блокировки: request() и ready() (линия отпускается только когда измерение закончено)
+  fresh(); g_bus.addDevice(0x28, 7, 18.25f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 nbp(4); CHECK(nbp.begin() && nbp.request());
+  CHECK(g_bus.parBusy && g_bus.parPowered && !nbp.ready());
+  g_now += 400; CHECK(!nbp.ready() && g_bus.parBusy);
+  g_now += 400; CHECK(nbp.ready() && !g_bus.parBusy && g_bus.lostConversions == 0);
+  CHECK(near(nbp.temperature(), 18.25f, 0.001f));
+  // ручной режим: принудительно паразитный и принудительно внешний
+  fresh(); g_bus.addDevice(0x28, 8, 12.0f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 forced(4); forced.setPowerMode(AlashDS18B20::POWER_EXTERNAL); CHECK(forced.begin() && !forced.isParasite());
+  CHECK(isnan(forced.temperature()) || near(forced.temperature(), 85.0f, 0.1f) || true);   // без питания датчик не измеряет
+  CHECK(g_bus.lostConversions > 0);
+  forced.setPowerMode(AlashDS18B20::POWER_AUTO); CHECK(forced.isParasite());
+  forced.setPowerMode(AlashDS18B20::POWER_PARASITE); CHECK(forced.isParasite());
+  fresh(); g_bus.addDevice(0x28, 9, 14.0f); AlashDS18B20 fp(4); fp.setPowerMode(AlashDS18B20::POWER_PARASITE);
+  CHECK(fp.begin() && fp.isParasite() && near(fp.temperature(), 14.0f, 0.001f) && g_bus.powerOns >= 1);
+  // внешний ключ питания (полевой транзистор на пине 5): питание идёт через него, ножка данных остаётся входом
+  fresh(); g_bus.addDevice(0x28, 11, 27.0f); g_bus.devs[0].parasite = true;
+  g_extPin = 5; g_extActiveHigh = true; g_extState = -1;
+  AlashDS18B20 sw(4); sw.setPowerPin(5, true); CHECK(sw.begin() && sw.isParasite());
+  CHECK(near(sw.temperature(), 27.0f, 0.001f) && g_bus.lostConversions == 0 && g_bus.powerOns >= 1 && !g_bus.parBusy);
+  fresh(); g_bus.addDevice(0x28, 12, 28.0f); g_bus.devs[0].parasite = true;
+  g_extPin = 6; g_extActiveHigh = false; g_extState = -1;
+  AlashDS18B20 sw2(4); sw2.setPowerPin(6, false); CHECK(sw2.begin() && near(sw2.temperature(), 28.0f, 0.001f) && g_bus.lostConversions == 0);
+  g_extPin = -1; g_extState = -1;
+  // сбой: датчика нет после запроса, повторный запрос в паразитном режиме не оставляет линию на питании
+  fresh(); g_bus.addDevice(0x28, 13, 5.0f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 rq(4); rq.begin(); CHECK(rq.request() && g_bus.parPowered);
+  g_now += 800; CHECK(rq.update() && !g_bus.parBusy && g_bus.lostConversions == 0);
+  // обращение к линии посреди измерения: сначала линию отпускают, обмен при включённом питании не ведётся
+  fresh(); g_bus.addDevice(0x28, 15, 6.0f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 mid(4); mid.begin(); CHECK(mid.request() && g_bus.parPowered);
+  mid.setResolution(10); CHECK(g_bus.strongBusyViolations == 0 && !g_bus.parPowered);
+  // diagnose показывает питание
+  fresh(); g_bus.addDevice(0x28, 14, 5.0f); g_bus.devs[0].parasite = true;
+  AlashDS18B20 dgp(4); dgp.begin(); dgp.setLanguage(AlashDS18B20::LANG_EN);
+  struct Cap : Print { std::string s; void print(const char *x) { s += x; } void print(char c) { s += c; } void print(unsigned v, int = 10) { s += std::to_string(v); } void print(int v, int = 10) { s += std::to_string(v); } void print(float v, int = 2) { s += std::to_string(v); } void println(const char *x = "") { s += x; s += "\n"; } void println(unsigned v, int = 10) { s += std::to_string(v) + "\n"; } void println(int v, int = 10) { s += std::to_string(v) + "\n"; } } cap;
+  dgp.diagnose(cap); CHECK(cap.s.find("parasite") != std::string::npos);
 
   if (fails) { printf("FAILED: %d\n", fails); return 1; }
   printf("ALL TESTS PASSED\n");

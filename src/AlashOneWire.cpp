@@ -41,6 +41,19 @@ void AlashOneWire::pullLow() {
 bool AlashOneWire::sample() { return digitalRead(_pin) != 0; }
 #endif
 
+// Линия работает на выход и держит HIGH: питание датчика идёт через ножку (до ~40 мА у AVR и ESP32)
+void AlashOneWire::powerOn() {
+#if defined(ARDUINO_ARCH_AVR)
+  *_port |= _mask;
+  *_ddr |= _mask;
+#else
+  digitalWrite(_pin, HIGH);
+  pinMode(_pin, OUTPUT);
+#endif
+}
+
+void AlashOneWire::powerOff() { release(); }
+
 bool AlashOneWire::lineHigh() {
   release();
   for (uint8_t i = 0; i < 125; i++) {      // линия должна подняться за ~250 мкс

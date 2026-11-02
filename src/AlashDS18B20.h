@@ -27,6 +27,9 @@ class AlashDS18B20 {
     ERR_NO_SUCH      // датчика с таким номером нет
   };
 
+  // Питание датчиков: AUTO сама спрашивает датчики (команда Read Power Supply), EXTERNAL: три провода, PARASITE: два провода (VDD и GND вместе)
+  enum PowerMode : uint8_t { POWER_AUTO = 0, POWER_EXTERNAL = 1, POWER_PARASITE = 2 };
+
   // Язык подсказок errorText() и diagnose()
   enum Language : uint8_t { LANG_RU = 0, LANG_KK = 1, LANG_EN = 2 };
 
@@ -39,6 +42,13 @@ class AlashDS18B20 {
   // begin() ищет все датчики на линии и ставит точность 12 бит. true, если найден хотя бы один.
   bool begin();
   uint8_t rescan();                        // искать датчики заново (например, после подключения нового)
+  // Паразитное питание (два провода): библиотека сама узнаёт о нём в begin() и на время измерения держит линию на питании.
+  // Нужен резистор 4,7 кОм до питания, длинная линия и много датчиков требуют внешнего ключа (см. setPowerPin).
+  void setPowerMode(PowerMode mode);
+  bool isParasite() const { return _parasite; }
+  // Ключ питания: пин (через полевой транзистор или PNP), подающий питание на линию на время измерения вместо самой ножки данных.
+  // Нужен при паразитном питании, если датчиков много или провода длинные (ножка МК даёт слишком мало тока).
+  void setPowerPin(int8_t pin, bool activeHigh = true);
   void setPullup(bool on) { _ow.setPullup(on); }   // внутренняя подтяжка МК (лучше внешний резистор 4,7 кОм)
 
   // ---- Измерения (при первом вызове за цикл датчики измеряют сами) -------------
@@ -81,6 +91,11 @@ class AlashDS18B20 {
   Error _errs[ALASH_DS18B20_MAX];
   Error _err = ERR_OK;
   Language _lang = LANG_RU;
+  PowerMode _power = POWER_AUTO;
+  bool _parasite = false;
+  bool _strong = false;                    // линия сейчас держится на питании (идёт измерение)
+  int8_t _powerPin = -1;
+  bool _powerActiveHigh = true;
   uint8_t _res = 12;
   uint16_t _convMs = 750;
   uint16_t _cacheMs = 500;
@@ -89,6 +104,8 @@ class AlashDS18B20 {
   uint32_t _reqAt = 0;
   uint32_t _lastRead = 0;
 
+  void strongPullup(bool on);              // жёсткое питание линии на время измерения (паразитный режим)
+  void detectPower();                      // команда Read Power Supply
   bool presence();                         // сброс линии; при неудаче ставит ERR_SHORT или ERR_NO_SENSOR
   void select(uint8_t index);              // Skip ROM (один датчик) или Match ROM
   bool readScratchpad(uint8_t index, uint8_t *sp);

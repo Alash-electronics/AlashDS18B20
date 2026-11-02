@@ -7,6 +7,7 @@ static const uint8_t CMD_SKIP_ROM = 0xCC;
 static const uint8_t CMD_CONVERT = 0x44;
 static const uint8_t CMD_WRITE_SCRATCHPAD = 0x4E;
 static const uint8_t CMD_READ_SCRATCHPAD = 0xBE;
+static const uint8_t CMD_READ_POWER = 0xB4;
 
 // Текст на трёх языках: T(по-русски, қазақша, English)
 #define T(ru, kk, en) (_lang == LANG_KK ? F(kk) : _lang == LANG_EN ? F(en) : F(ru))
@@ -24,6 +25,7 @@ bool AlashDS18B20::begin() {
 }
 
 uint8_t AlashDS18B20::rescan() {
+  strongPullup(false);
   _count = 0;
   _other = 0;
   _truncated = false;
@@ -43,10 +45,46 @@ uint8_t AlashDS18B20::rescan() {
   updateConversionTime();
   if (_count == 0) _err = (_other == 0) ? ERR_CRC : ERR_NO_SENSOR;   // линия ответила, но адресов не получили
   else _err = ERR_OK;
+  detectPower();
   return _count;
 }
 
+// Определяем питание: датчик с паразитным питанием в ответ на Read Power Supply прижимает линию к земле, с внешним питанием отпускает.
+// Если на линии есть хоть один паразитный датчик, считаем паразитной всю линию: так надёжнее.
+void AlashDS18B20::detectPower() {
+  if (_power == POWER_EXTERNAL) { _parasite = false; return; }
+  if (_power == POWER_PARASITE) { _parasite = true; return; }
+  _parasite = false;
+  if (_count == 0 || !_ow.reset()) return;
+  _ow.writeByte(CMD_SKIP_ROM);
+  _ow.writeByte(CMD_READ_POWER);
+  _parasite = !_ow.readBit();
+}
+
+void AlashDS18B20::setPowerMode(PowerMode mode) {
+  _power = mode;
+  detectPower();
+}
+
+void AlashDS18B20::setPowerPin(int8_t pin, bool activeHigh) {
+  _powerPin = pin;
+  _powerActiveHigh = activeHigh;
+  if (pin >= 0) {
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, activeHigh ? LOW : HIGH);   // ключ выключен
+  }
+}
+
+void AlashDS18B20::strongPullup(bool on) {
+  if (on == _strong) return;
+  _strong = on;
+  if (_powerPin >= 0) digitalWrite(_powerPin, (on == _powerActiveHigh) ? HIGH : LOW);
+  else if (on) _ow.powerOn();
+  else _ow.powerOff();
+}
+
 bool AlashDS18B20::presence() {
+  strongPullup(false);                     // перед любым обменом линию надо отпустить
   if (_ow.reset()) return true;
   _err = _ow.lineHigh() ? ERR_NO_SENSOR : ERR_SHORT;
   return false;
@@ -71,13 +109,16 @@ bool AlashDS18B20::request() {
   if (!presence()) return false;
   _ow.writeByte(CMD_SKIP_ROM);             // все датчики измеряют одновременно
   _ow.writeByte(CMD_CONVERT);
+  if (_parasite) strongPullup(true);       // питание сразу после команды (не позже 10 мкс) и на всё время измерения
   _pending = true;
   _reqAt = millis();
   return true;
 }
 
 bool AlashDS18B20::ready() {
-  return _pending && (uint32_t)(millis() - _reqAt) >= _convMs;
+  bool done = _pending && (uint32_t)(millis() - _reqAt) >= _convMs;
+  if (done) strongPullup(false);           // измерение закончилось: линию можно отпустить
+  return done;
 }
 
 bool AlashDS18B20::ensureFresh() {
@@ -91,6 +132,7 @@ bool AlashDS18B20::ensureFresh() {
   }
   uint32_t elapsed = millis() - _reqAt;
   if (elapsed < _convMs) delay(_convMs - elapsed);
+  strongPullup(false);
   readAll();
 
   // 85,0 °C это значение датчика после включения. Измеряем ещё раз, чтобы не принять его за температуру.
@@ -99,12 +141,14 @@ bool AlashDS18B20::ensureFresh() {
     if (_errs[i] == ERR_OK && _t[i] == 85.0f) again = true;
   if (again && request()) {
     delay(_convMs);
+    strongPullup(false);
     readAll();
   }
   return true;
 }
 
 bool AlashDS18B20::update() {
+  strongPullup(false);
   _pending = false;
   _hasData = false;
   return ensureFresh();
@@ -294,6 +338,11 @@ void AlashDS18B20::diagnose(Print &out) {
       out.println(F(" C"));
     }
   }
+  if (_count) {
+    out.print(T("Питание датчиков: ", "Сенсорлардың қуаты: ", "Sensor power: "));
+    out.println(_parasite ? T("паразитное (два провода)", "паразиттік (екі сым)", "parasite (two wires)")
+                          : T("внешнее (три провода)", "сыртқы (үш сым)", "external (three wires)"));
+  }
   if (_other) {
     out.print(T("Другие устройства 1-Wire: ", "Басқа 1-Wire құрылғылары: ", "Other 1-Wire devices: "));
     out.println(_other);
@@ -307,6 +356,9 @@ void AlashDS18B20::diagnose(Print &out) {
         out.println(T("Показывает ровно 85 C: так датчик отвечает без нормального питания. Проверьте 3.3-5 В и GND",
                       "Дәл 85 C көрсетеді: сенсор қуатсыз осылай жауап береді. 3.3-5 В және GND тексеріңіз",
                       "Reads exactly 85 C: that is the power-on value. Check the 3.3-5 V and GND wires"));
+        if (_parasite) out.println(T("При паразитном питании это ещё и признак слабого питания во время измерения: поставьте резистор 4,7 кОм на питание, укоротите линию или подключите ключ питания setPowerPin().",
+                                     "Паразиттік қуатта бұл өлшеу кезіндегі әлсіз қуаттың белгісі: қуатқа 4,7 кОм резистор қойыңыз, желіні қысқартыңыз не setPowerPin() қуат кілтін қосыңыз.",
+                                     "With parasite power this also means weak power during the measurement: add a 4.7 kOhm pull-up, shorten the line or add a power switch with setPowerPin()."));
         break;
       }
   }

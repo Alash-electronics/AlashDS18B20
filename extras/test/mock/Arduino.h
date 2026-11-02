@@ -17,16 +17,19 @@ inline uint32_t g_now = 0;
 inline uint32_t millis() { return g_now; }
 inline void delay(uint32_t ms) { g_now += ms; }
 inline void delayMicroseconds(uint32_t) {}
+void pinMode(uint8_t pin, uint8_t mode);
+void digitalWrite(uint8_t pin, uint8_t value);
 inline void noInterrupts() {}
 inline void interrupts() {}
 class Print {
  public:
-  void print(const char *s) { printf("%s", s); }
-  void print(char c) { printf("%c", c); }
-  void print(unsigned v, int base = DEC) { printf(base == HEX ? "%X" : "%u", v); }
-  void print(int v, int base = DEC) { printf(base == HEX ? "%X" : "%d", v); }
-  void print(float v, int digits = 2) { printf("%.*f", digits, v); }
-  void println(const char *s = "") { printf("%s\n", s); }
-  void println(unsigned v, int base = DEC) { print(v, base); printf("\n"); }
-  void println(int v, int base = DEC) { print(v, base); printf("\n"); }
+  virtual ~Print() {}
+  virtual void print(const char *s) { printf("%s", s); }
+  virtual void print(char c) { printf("%c", c); }
+  virtual void print(unsigned v, int base = DEC) { printf(base == HEX ? "%X" : "%u", v); }
+  virtual void print(int v, int base = DEC) { printf(base == HEX ? "%X" : "%d", v); }
+  virtual void print(float v, int digits = 2) { printf("%.*f", digits, v); }
+  virtual void println(const char *s = "") { printf("%s\n", s); }
+  virtual void println(unsigned v, int base = DEC) { print(v, base); printf("\n"); }
+  virtual void println(int v, int base = DEC) { print(v, base); printf("\n"); }
 };
