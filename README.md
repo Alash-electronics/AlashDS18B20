@@ -55,6 +55,8 @@ DallasTemperature по-прежнему хороша, если нужны буд
 ### Тесты
 Протокол 1-Wire (поиск устройств по AN187, CRC8, выбор датчика, расчёт температуры) проверен без железа на имитации линии: `extras/test`.
 
+Подробное руководство: [docs/WIKI.md](docs/WIKI.md).
+
 ---
 
 ## Қазақша
@@ -95,6 +97,8 @@ void loop() {
 
 ### Мысалдар
 `Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `Thermostat`.
+
+Толық нұсқаулық: [docs/WIKI.md](docs/WIKI.md).
 
 ---
 
@@ -138,6 +142,8 @@ Not supported: alarms, EEPROM copy and parasite power (use the three-wire connec
 
 ### Examples
 `Basic`, `Diagnose`, `MultipleSensors`, `NonBlocking`, `Thermostat`.
+
+Full guide: [docs/WIKI.md](docs/WIKI.md).
 
 ### License
 MIT, Alash Electronics.
